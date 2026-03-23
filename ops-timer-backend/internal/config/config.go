@@ -1,6 +1,8 @@
 package config
 
 import (
+	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/viper"
@@ -72,20 +74,37 @@ type LogConfig struct {
 	Format string `mapstructure:"format"`
 }
 
+// Load 从配置文件与环境变量加载配置。环境变量前缀为 TIMER_，嵌套键中的点替换为下划线
+//（例如 TIMER_AUTH_JWT_SECRET 对应 auth.jwt_secret）。
+// 若 path 非空但文件不存在，则跳过文件，仅使用环境变量及下方默认值（适用于 Docker 等仅注入环境变量的场景）。
+// path 为空时同样不读取文件，仅环境变量。
 func Load(path string) (*Config, error) {
-	viper.SetConfigFile(path)
-	viper.SetConfigType("yaml")
+	v := viper.New()
+	v.SetConfigType("yaml")
 
-	viper.SetEnvPrefix("TIMER")
-	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
-	viper.AutomaticEnv()
+	v.SetEnvPrefix("TIMER")
+	v.SetEnvKeyReplacer(strings.NewReplacer(".", "_"))
+	v.AutomaticEnv()
 
-	if err := viper.ReadInConfig(); err != nil {
-		return nil, err
+	if path != "" {
+		fi, err := os.Stat(path)
+		switch {
+		case err == nil && fi.IsDir():
+			return nil, fmt.Errorf("config path %q is a directory", path)
+		case err == nil && !fi.IsDir():
+			v.SetConfigFile(path)
+			if err := v.ReadInConfig(); err != nil {
+				return nil, fmt.Errorf("read config file %q: %w", path, err)
+			}
+		case err != nil && os.IsNotExist(err):
+			// 无配置文件：仅 TIMER_* 环境变量 + 默认值
+		default:
+			return nil, fmt.Errorf("stat config path %q: %w", path, err)
+		}
 	}
 
 	var cfg Config
-	if err := viper.Unmarshal(&cfg); err != nil {
+	if err := v.Unmarshal(&cfg); err != nil {
 		return nil, err
 	}
 

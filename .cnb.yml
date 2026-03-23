@@ -1,0 +1,95 @@
+main:
+
+  push:
+    - services:
+        - docker
+      imports: https://cnb.cool/greenshadecapital/dreamreflex/devops-server-secrets/-/blob/main/s2-server.yml
+      stages:
+        - name: docker login
+          script: docker login -u ${CNB_TOKEN_USER_NAME} -p "${CNB_TOKEN}" ${CNB_DOCKER_REGISTRY}
+
+        # 构建：固定标签 prod（可选地同时打上 commit 标签以便审计/回滚）
+        - name: docker build
+          script: |
+            docker build \
+              -t ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:prod \
+              -t ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${CNB_COMMIT} \
+              .
+
+        # 推送：至少推 :prod；（可选）同时推 :commit
+        - name: docker push
+          script: |
+            docker push ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:prod
+            docker push ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:${CNB_COMMIT}
+
+        # 远端部署：仅使用固定标签 :prod
+        - name: 通过 ssh 执行命令
+          image: tencentcom/ssh
+          settings:
+            host:
+              - ${S2_IP}
+            username: ${S2_SSH_USER}
+            key: ${S2_SSH_PVKEY}
+            port: ${S2_SSH_PORT}
+            command_timeout: 2m
+            script: |
+              set -euo pipefail
+
+              cd /root/
+              docker login -u ${CNB_TOKEN_USER_NAME} -p "${CNB_TOKEN}" ${CNB_DOCKER_REGISTRY}
+
+              # 停并删旧容器（修正 rm 笔误）
+              docker stop dreamreflex-countdown || true
+              docker rm   dreamreflex-countdown || true
+
+              # 启新容器：只用固定标签 prod，并确保每次拉最新
+              docker run -d --network host --name dreamreflex-countdown \
+                --pull=always \
+                --restart unless-stopped \
+                -p 5003:5003 \
+                -e PROJECT_NAME="${DEVOPS_COUNTDOWN_PROJECT_NAME}" \
+                -e API_V1_STR="${DEVOPS_COUNTDOWN_API_V1_STR}" \
+                -e SECRET_KEY="${DEVOPS_COUNTDOWN_SECRET_KEY}" \
+                -e ACCESS_TOKEN_EXPIRE_MINUTES="${DEVOPS_COUNTDOWN_ACCESS_TOKEN_EXPIRE_MINUTES}" \
+                -e FIRST_SUPERUSER="${DEVOPS_COUNTDOWN_FIRST_SUPERUSER}" \
+                -e FIRST_SUPERUSER_PASSWORD="${DEVOPS_COUNTDOWN_FIRST_SUPERUSER_PASSWORD}" \
+                -e MONGODB_URL="${DEVOPS_COUNTDOWN_MONGODB_URL}" \
+                -e MONGODB_DB_NAME="${DEVOPS_COUNTDOWN_MONGODB_DB_NAME}" \
+                -e RESEND_API_KEY="${DEVOPS_COUNTDOWN_RESEND_API_KEY}" \
+                -e EMAILS_FROM_NAME="${DEVOPS_COUNTDOWN_EMAILS_FROM_NAME}" \
+                -e EMAILS_FROM_EMAIL="${DEVOPS_COUNTDOWN_EMAILS_FROM_EMAIL}" \
+                -e EMAILS_TO_TOKEN_TIMEOUT_MINUTES="${DEVOPS_COUNTDOWN_EMAILS_TO_TOKEN_TIMEOUT_MINUTES}" \
+                -e BUILD_SHA="${CNB_COMMIT}" \
+                ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}:prod
+
+              # （可选）清理：保留当前仓库正在运行的镜像，其余删除；并清 dangling 层
+              repo="${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}"
+              running_img_id="$(docker inspect -f '{{.Image}}' dreamreflex-countdown || true)"   # sha256:...
+              docker images "${repo}" -q | grep -v "${running_img_id#sha256:}" | xargs -r docker rmi -f || true
+              docker image prune -f || true
+              
+$:
+  # 自动生成的CodeWiki
+  tag_push:
+    - services:
+        - docker
+      docker:
+        volumes:
+          - /data/codewiki/${CNB_REPO_SLUG}:data
+      stages:
+        - name: 生成 Code Wiki
+          # 当仓库比较大时，codewiki 用时会超过流水线默认的1小时，导致流水线自动结束。所以手动指定流水线超时时间
+          timeout: 2h
+          image: cnbcool/codewiki:latest
+          settings:
+            git_doc_dir: /data/codewiki/${CNB_REPO_SLUG}
+
+        - name: 发送CodeWiki数据
+          imports:
+            - https://cnb.cool/greenshadecapital/dreamreflex/assets-secrets/-/blob/main/api-server.yml
+          script: |
+            tar -C /data/codewiki/${CNB_REPO_SLUG} -czf - . \
+            | curl --fail --retry 3 \
+                -H "X-API-Key: ${UPLOAD_API_KEY}" \
+                --upload-file - \
+                https://api.dreamreflex.com/api/upload/dir-$(date +%F).tar.gz

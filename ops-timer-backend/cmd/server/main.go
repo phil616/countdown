@@ -25,7 +25,7 @@ import (
 )
 
 func main() {
-	configPath := flag.String("config", "config.yaml", "配置文件路径")
+	configPath := flag.String("config", "config.yaml", "配置文件路径；若文件不存在则仅从环境变量 TIMER_* 读取")
 	initAdmin := flag.Bool("init-admin", false, "初始化/重置管理员账户")
 	adminUser := flag.String("admin-user", "admin", "管理员用户名")
 	adminPass := flag.String("admin-pass", "admin123", "管理员密码")

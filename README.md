@@ -113,7 +113,9 @@ curl http://localhost:8080/api/v1/units \
 
 ## 配置说明
 
-配置文件 `ops-timer-backend/config.yaml`：
+默认读取工作目录下的 `config.yaml`（可用 `-config` 指定路径）。**若该文件不存在**，则不从磁盘加载 YAML，仅使用环境变量 `TIMER_*` 与程序内默认值（适合 Docker 只注入环境变量、不挂载配置文件）。
+
+参考模板：`ops-timer-backend/config.yaml`；**环境变量键名示例**（全量 `TIMER_*`）：[`ops-timer-backend/env.example`](ops-timer-backend/env.example)。
 
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
@@ -124,4 +126,4 @@ curl http://localhost:8080/api/v1/units \
 | `auth.jwt_expiry_hours` | JWT 过期时间（小时） | 24 |
 | `scheduler.notification_scan_interval` | 通知扫描间隔 | 1h |
 
-所有配置均可通过环境变量覆盖，前缀 `TIMER_`，如 `TIMER_AUTH_JWT_SECRET`。
+有配置文件时，各项均可被环境变量覆盖；无配置文件时则完全依赖环境变量。前缀均为 `TIMER_`，嵌套键中的 `.` 写成 `_`，如 `TIMER_AUTH_JWT_SECRET`、`TIMER_DATABASE_DSN`。
