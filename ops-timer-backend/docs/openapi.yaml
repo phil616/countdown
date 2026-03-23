@@ -1,0 +1,2166 @@
+openapi: 3.0.3
+info:
+  title: 运维计时管理系统 API
+  description: |
+    面向运维场景的计时、项目、待办与通知管理 REST API。
+
+    ## 认证
+    - **JWT**：在请求头添加 `Authorization: Bearer <token>`，`token` 由 `POST /api/v1/auth/login` 或 OAuth 回调获得。
+    - **API Token**：在请求头添加 `X-API-Token: <api_token>`，适用于脚本与第三方集成（见 `GET /api/v1/auth/token`）。
+
+    ## 统一响应体
+    除 `204 No Content`、OAuth 重定向及少数裸 JSON 外，成功响应体为：
+    ```json
+    { "code": 0, "message": "success", "data": { ... } }
+    ```
+    分页列表额外包含 `meta`：`page`、`page_size`、`total`、`total_pages`。
+
+    ## 业务错误码（`code` 字段）
+    | code | 说明 |
+    |------|------|
+    | 0 | 成功 |
+    | 40001 | 参数校验失败 |
+    | 40101 | 认证缺失 |
+    | 40102 | Token 无效 |
+    | 40103 | 凭据错误 |
+    | 40104 | 登录锁定（限流） |
+    | 40401 | 资源不存在 |
+    | 42201 | 业务规则错误 |
+    | 50001 | 服务器内部错误 |
+  version: 1.0.0
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: "{baseUrl}"
+    variables:
+      baseUrl:
+        default: http://localhost:8080
+        description: 服务根地址（不含尾部斜杠）
+
+tags:
+  - name: Health
+    description: 健康检查（无需认证）
+  - name: Auth
+    description: 账号登录、资料与 API Token
+  - name: OAuth
+    description: OIDC/OAuth 单点登录（需服务端配置）
+  - name: Units
+    description: 计时单元（倒计时/正计时/计数等）
+  - name: Projects
+    description: 项目聚合
+  - name: Todos
+    description: 待办事项
+  - name: TodoGroups
+    description: 待办分组
+  - name: Notifications
+    description: 系统通知
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: 健康检查
+      operationId: healthCheck
+      responses:
+        "200":
+          description: 服务正常
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeSuccess"
+              examples:
+                ok:
+                  value:
+                    code: 0
+                    message: success
+                    data:
+                      status: ok
+
+  /api/v1/auth/login:
+    post:
+      tags: [Auth]
+      summary: 用户名密码登录
+      operationId: authLogin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: 登录成功，返回 JWT 与用户信息
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/LoginResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedCredential"
+        "429":
+          $ref: "#/components/responses/TooManyRequestsLoginLock"
+
+  /api/v1/auth/logout:
+    post:
+      tags: [Auth]
+      summary: 登出（使当前 JWT 失效）
+      operationId: authLogout
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeSuccess"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/auth/profile:
+    get:
+      tags: [Auth]
+      summary: 获取当前用户资料
+      operationId: authGetProfile
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UserResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Auth]
+      summary: 更新当前用户资料
+      operationId: authUpdateProfile
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProfileRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UserResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/auth/password:
+    put:
+      tags: [Auth]
+      summary: 修改密码
+      operationId: authChangePassword
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChangePasswordRequest"
+      responses:
+        "200":
+          description: 成功，`data` 可为 null
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeSuccess"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/UnauthorizedCredential"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/auth/token:
+    get:
+      tags: [Auth]
+      summary: 获取当前用户的 API Token（明文）
+      operationId: authGetApiToken
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TokenResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/auth/token/regenerate:
+    post:
+      tags: [Auth]
+      summary: 重新生成 API Token（旧 Token 立即失效）
+      operationId: authRegenerateApiToken
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TokenResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/auth/test-email:
+    post:
+      tags: [Auth]
+      summary: 发送测试邮件到当前用户邮箱（需配置 SMTP）
+      operationId: authTestEmail
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: 发送成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeSuccess"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/BusinessError"
+
+  /api/v1/auth/smtp-status:
+    get:
+      tags: [Auth]
+      summary: 查询 SMTP 是否已配置
+      operationId: authSmtpStatus
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: OK，`data.enabled` 为布尔值
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeSuccess"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/auth/oauth/config:
+    get:
+      tags: [OAuth]
+      summary: OAuth 是否启用（供前端展示登录入口）
+      operationId: oauthConfig
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        type: object
+                        required: [enabled]
+                        properties:
+                          enabled:
+                            type: boolean
+
+  /api/v1/auth/oauth/login:
+    get:
+      tags: [OAuth]
+      summary: 跳转至 IdP 授权页
+      description: |
+        未启用 OAuth 时返回 `503`。成功时返回 **302**，`Location` 为 IdP 授权 URL。
+      operationId: oauthLogin
+      responses:
+        "302":
+          description: 重定向到 OAuth 提供商
+        "500":
+          $ref: "#/components/responses/InternalError"
+        "503":
+          description: OAuth 未启用
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: OAuth 未启用
+
+  /api/v1/auth/oauth/callback:
+    get:
+      tags: [OAuth]
+      summary: OAuth 授权回调（由 IdP 重定向调用）
+      description: |
+        成功时 **302** 重定向到前端 `frontend_url/oauth/callback?token=...`。
+        失败时可能 **302** 带 `error` 查询参数，或在未配置前端 URL 时返回 **400** JSON。
+      operationId: oauthCallback
+      parameters:
+        - name: code
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+        - name: error
+          in: query
+          schema:
+            type: string
+        - name: error_description
+          in: query
+          schema:
+            type: string
+      responses:
+        "302":
+          description: 重定向到前端或错误页
+        "400":
+          description: 参数错误或无法重定向（无 frontend_url）
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+
+  /api/v1/units:
+    get:
+      tags: [Units]
+      summary: 分页查询计时单元列表
+      operationId: unitsList
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/unitQueryType"
+        - $ref: "#/components/parameters/unitQueryStatus"
+        - $ref: "#/components/parameters/unitQueryProjectId"
+        - $ref: "#/components/parameters/unitQueryTags"
+        - $ref: "#/components/parameters/unitQueryPriority"
+        - $ref: "#/components/parameters/sortBy"
+        - $ref: "#/components/parameters/sortOrder"
+        - $ref: "#/components/parameters/queryQ"
+        - $ref: "#/components/parameters/page"
+        - $ref: "#/components/parameters/pageSize"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccessWithMeta"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/UnitResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Units]
+      summary: 创建计时单元
+      operationId: unitsCreate
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUnitRequest"
+      responses:
+        "201":
+          description: 已创建
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UnitResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/BusinessError"
+
+  /api/v1/units/summary:
+    get:
+      tags: [Units]
+      summary: 计时单元统计摘要
+      operationId: unitsSummary
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UnitSummary"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/units/{id}:
+    parameters:
+      - $ref: "#/components/parameters/idPath"
+    get:
+      tags: [Units]
+      summary: 获取单个计时单元
+      operationId: unitsGet
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UnitResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Units]
+      summary: 全量更新计时单元
+      operationId: unitsPut
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUnitRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UnitResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/BusinessError"
+    patch:
+      tags: [Units]
+      summary: 部分更新计时单元（与 PUT 语义相同，仅提交需修改字段）
+      operationId: unitsPatch
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUnitRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UnitResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/BusinessError"
+    delete:
+      tags: [Units]
+      summary: 删除计时单元
+      operationId: unitsDelete
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      responses:
+        "204":
+          description: 删除成功，无响应体
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/units/{id}/status:
+    patch:
+      tags: [Units]
+      summary: 更新计时单元状态
+      operationId: unitsUpdateStatus
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/idPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUnitStatusRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UnitResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/units/{id}/step:
+    post:
+      tags: [Units]
+      summary: 计数类单元步进（上/下）
+      operationId: unitsStep
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/idPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StepRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UnitResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/BusinessError"
+
+  /api/v1/units/{id}/value:
+    put:
+      tags: [Units]
+      summary: 直接设置计数类单元当前值
+      operationId: unitsSetValue
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/idPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetValueRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UnitResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/BusinessError"
+
+  /api/v1/units/{id}/logs:
+    get:
+      tags: [Units]
+      summary: 分页查询单元操作日志
+      operationId: unitsGetLogs
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/idPath"
+        - $ref: "#/components/parameters/page"
+        - $ref: "#/components/parameters/pageSize"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccessWithMeta"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/UnitLogResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/projects:
+    get:
+      tags: [Projects]
+      summary: 分页查询项目列表
+      operationId: projectsList
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [active, completed, archived]
+        - $ref: "#/components/parameters/sortBy"
+        - $ref: "#/components/parameters/page"
+        - $ref: "#/components/parameters/pageSize"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccessWithMeta"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/ProjectResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Projects]
+      summary: 创建项目
+      operationId: projectsCreate
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProjectRequest"
+      responses:
+        "201":
+          description: 已创建
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ProjectResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/projects/{id}:
+    parameters:
+      - $ref: "#/components/parameters/idPath"
+    get:
+      tags: [Projects]
+      summary: 获取项目详情
+      operationId: projectsGet
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ProjectResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Projects]
+      summary: 更新项目
+      operationId: projectsPut
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProjectRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ProjectResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      tags: [Projects]
+      summary: 部分更新项目
+      operationId: projectsPatch
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProjectRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/ProjectResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [Projects]
+      summary: 删除项目
+      operationId: projectsDelete
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      responses:
+        "204":
+          description: 删除成功，无响应体
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/projects/{id}/units:
+    get:
+      tags: [Projects]
+      summary: 分页查询某项目下的计时单元
+      operationId: projectsGetUnits
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/idPath"
+        - $ref: "#/components/parameters/page"
+        - $ref: "#/components/parameters/pageSize"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccessWithMeta"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/UnitResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/todos:
+    get:
+      tags: [Todos]
+      summary: 分页查询待办列表
+      operationId: todosList
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [pending, in_progress, done, cancelled]
+        - name: priority
+          in: query
+          schema:
+            type: string
+            enum: [low, normal, high, critical]
+        - name: group_id
+          in: query
+          schema:
+            type: string
+        - name: due_date
+          in: query
+          description: 筛选条件（格式由服务端解析）
+          schema:
+            type: string
+        - $ref: "#/components/parameters/page"
+        - $ref: "#/components/parameters/pageSize"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccessWithMeta"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/TodoResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [Todos]
+      summary: 创建待办
+      operationId: todosCreate
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTodoRequest"
+      responses:
+        "201":
+          description: 已创建
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TodoResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/BusinessError"
+
+  /api/v1/todos/batch:
+    post:
+      tags: [Todos]
+      summary: 批量完成或删除待办
+      operationId: todosBatch
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BatchTodoRequest"
+      responses:
+        "200":
+          description: 成功，`data` 可为 null
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeSuccess"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/BusinessError"
+
+  /api/v1/todos/{id}:
+    parameters:
+      - $ref: "#/components/parameters/idPath"
+    get:
+      tags: [Todos]
+      summary: 获取单个待办
+      operationId: todosGet
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TodoResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    put:
+      tags: [Todos]
+      summary: 更新待办
+      operationId: todosPut
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTodoRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TodoResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/BusinessError"
+    patch:
+      tags: [Todos]
+      summary: 部分更新待办
+      operationId: todosPatch
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTodoRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TodoResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/BusinessError"
+    delete:
+      tags: [Todos]
+      summary: 删除待办
+      operationId: todosDelete
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      responses:
+        "204":
+          description: 删除成功，无响应体
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
+  /api/v1/todos/{id}/status:
+    patch:
+      tags: [Todos]
+      summary: 更新待办状态
+      operationId: todosUpdateStatus
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/idPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTodoStatusRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TodoResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/todo-groups:
+    get:
+      tags: [TodoGroups]
+      summary: 列出所有待办分组
+      operationId: todoGroupsList
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/TodoGroupResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      tags: [TodoGroups]
+      summary: 创建待办分组
+      operationId: todoGroupsCreate
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTodoGroupRequest"
+      responses:
+        "201":
+          description: 已创建
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TodoGroupResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          $ref: "#/components/responses/BusinessError"
+
+  /api/v1/todo-groups/{id}:
+    parameters:
+      - $ref: "#/components/parameters/idPath"
+    put:
+      tags: [TodoGroups]
+      summary: 更新待办分组
+      operationId: todoGroupsPut
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTodoGroupRequest"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/TodoGroupResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [TodoGroups]
+      summary: 删除待办分组
+      operationId: todoGroupsDelete
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      responses:
+        "204":
+          description: 删除成功，无响应体
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/notifications:
+    get:
+      tags: [Notifications]
+      summary: 分页查询通知列表
+      operationId: notificationsList
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - name: is_read
+          in: query
+          schema:
+            type: boolean
+        - name: level
+          in: query
+          schema:
+            type: string
+        - $ref: "#/components/parameters/page"
+        - $ref: "#/components/parameters/pageSize"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccessWithMeta"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/NotificationResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/notifications/read-all:
+    post:
+      tags: [Notifications]
+      summary: 全部标记为已读
+      operationId: notificationsReadAll
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: 成功，`data` 可为 null
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeSuccess"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/notifications/unread-count:
+    get:
+      tags: [Notifications]
+      summary: 未读通知数量
+      operationId: notificationsUnreadCount
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/EnvelopeSuccess"
+                  - type: object
+                    properties:
+                      data:
+                        $ref: "#/components/schemas/UnreadCountResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/v1/notifications/{id}:
+    delete:
+      tags: [Notifications]
+      summary: 删除单条通知
+      operationId: notificationsDelete
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/idPath"
+      responses:
+        "204":
+          description: 删除成功，无响应体
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v1/notifications/{id}/read:
+    patch:
+      tags: [Notifications]
+      summary: 将单条通知标记为已读
+      operationId: notificationsMarkRead
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+      parameters:
+        - $ref: "#/components/parameters/idPath"
+      responses:
+        "200":
+          description: 成功，`data` 可为 null
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvelopeSuccess"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: 使用 `POST /api/v1/auth/login` 或 OAuth 回调获得的 access token。
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Token
+      description: 长期 API Token，可在「设置」中查看与轮换。
+
+  parameters:
+    idPath:
+      name: id
+      in: path
+      required: true
+      description: 资源 UUID
+      schema:
+        type: string
+        format: uuid
+        example: "550e8400-e29b-41d4-a716-446655440000"
+    page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    pageSize:
+      name: page_size
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 20
+    sortBy:
+      name: sort_by
+      in: query
+      schema:
+        type: string
+    sortOrder:
+      name: sort_order
+      in: query
+      schema:
+        type: string
+        enum: [asc, desc]
+    queryQ:
+      name: q
+      in: query
+      description: 搜索关键词
+      schema:
+        type: string
+    unitQueryType:
+      name: type
+      in: query
+      schema:
+        type: string
+        enum: [time_countdown, time_countup, count_countdown, count_countup]
+    unitQueryStatus:
+      name: status
+      in: query
+      schema:
+        type: string
+        enum: [active, paused, completed, archived]
+    unitQueryProjectId:
+      name: project_id
+      in: query
+      schema:
+        type: string
+    unitQueryTags:
+      name: tags
+      in: query
+      schema:
+        type: string
+    unitQueryPriority:
+      name: priority
+      in: query
+      schema:
+        type: string
+        enum: [low, normal, high, critical]
+
+  responses:
+    BadRequest:
+      description: 参数校验失败
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/EnvelopeError"
+          examples:
+            validation:
+              value:
+                code: 40001
+                message: 参数校验失败
+                errors: []
+    Unauthorized:
+      description: 认证信息缺失或无效
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/EnvelopeError"
+          examples:
+            missing:
+              value:
+                code: 40101
+                message: 认证信息缺失或无效
+    UnauthorizedCredential:
+      description: 用户名或密码错误
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/EnvelopeError"
+    TooManyRequestsLoginLock:
+      description: 登录尝试过多，账号锁定
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/EnvelopeError"
+    NotFound:
+      description: 资源不存在
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/EnvelopeError"
+    BusinessError:
+      description: 业务规则错误
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/EnvelopeError"
+    InternalError:
+      description: 服务器内部错误
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/EnvelopeError"
+
+  schemas:
+    EnvelopeSuccess:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: integer
+          example: 0
+        message:
+          type: string
+          example: success
+        data:
+          nullable: true
+
+    EnvelopeSuccessWithMeta:
+      allOf:
+        - $ref: "#/components/schemas/EnvelopeSuccess"
+        - type: object
+          required: [meta]
+          properties:
+            meta:
+              $ref: "#/components/schemas/PaginationMeta"
+
+    PaginationMeta:
+      type: object
+      required: [page, page_size, total, total_pages]
+      properties:
+        page:
+          type: integer
+        page_size:
+          type: integer
+        total:
+          type: integer
+          format: int64
+        total_pages:
+          type: integer
+
+    EnvelopeError:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: integer
+        message:
+          type: string
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/FieldError"
+
+    FieldError:
+      type: object
+      properties:
+        field:
+          type: string
+        message:
+          type: string
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 32
+        password:
+          type: string
+          minLength: 6
+
+    LoginResponse:
+      type: object
+      required: [token, user]
+      properties:
+        token:
+          type: string
+          description: JWT access token
+        user:
+          $ref: "#/components/schemas/UserResponse"
+
+    UserResponse:
+      type: object
+      required: [id, username, display_name, email, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        display_name:
+          type: string
+        email:
+          type: string
+        created_at:
+          type: string
+        updated_at:
+          type: string
+
+    UpdateProfileRequest:
+      type: object
+      properties:
+        username:
+          type: string
+          minLength: 3
+          maxLength: 32
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 64
+        email:
+          type: string
+          format: email
+          maxLength: 128
+
+    ChangePasswordRequest:
+      type: object
+      required: [old_password, new_password]
+      properties:
+        old_password:
+          type: string
+        new_password:
+          type: string
+          minLength: 6
+
+    TokenResponse:
+      type: object
+      required: [api_token]
+      properties:
+        api_token:
+          type: string
+
+    CreateUnitRequest:
+      type: object
+      required: [title, type]
+      properties:
+        project_id:
+          type: string
+          nullable: true
+        title:
+          type: string
+          maxLength: 128
+        description:
+          type: string
+          maxLength: 2048
+        type:
+          type: string
+          enum: [time_countdown, time_countup, count_countdown, count_countup]
+        status:
+          type: string
+          enum: [active, paused, completed, archived]
+        priority:
+          type: string
+          enum: [low, normal, high, critical]
+        tags:
+          type: array
+          items:
+            type: string
+        color:
+          type: string
+        target_time:
+          type: string
+          format: date-time
+        start_time:
+          type: string
+          format: date-time
+        display_unit:
+          type: string
+          enum: [days, hours, minutes, seconds]
+        remind_before_days:
+          type: array
+          items:
+            type: integer
+        remind_after_days:
+          type: array
+          items:
+            type: integer
+        current_value:
+          type: number
+        target_value:
+          type: number
+        step:
+          type: number
+        unit_label:
+          type: string
+        allow_exceed:
+          type: boolean
+        remind_on_values:
+          type: array
+          items:
+            type: number
+
+    UpdateUnitRequest:
+      type: object
+      properties:
+        project_id:
+          type: string
+          nullable: true
+        clear_project:
+          type: boolean
+          description: 为 true 时从项目中移除该单元
+        title:
+          type: string
+        description:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [active, paused, completed, archived]
+        priority:
+          type: string
+          enum: [low, normal, high, critical]
+        tags:
+          type: array
+          items:
+            type: string
+        color:
+          type: string
+          nullable: true
+        target_time:
+          type: string
+          format: date-time
+          nullable: true
+        start_time:
+          type: string
+          format: date-time
+          nullable: true
+        display_unit:
+          type: string
+          enum: [days, hours, minutes, seconds]
+        remind_before_days:
+          type: array
+          items:
+            type: integer
+        remind_after_days:
+          type: array
+          items:
+            type: integer
+        current_value:
+          type: number
+        target_value:
+          type: number
+        step:
+          type: number
+        unit_label:
+          type: string
+        allow_exceed:
+          type: boolean
+        remind_on_values:
+          type: array
+          items:
+            type: number
+
+    UpdateUnitStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [active, paused, completed, archived]
+
+    StepRequest:
+      type: object
+      required: [direction]
+      properties:
+        direction:
+          type: string
+          enum: [up, down]
+        note:
+          type: string
+
+    SetValueRequest:
+      type: object
+      required: [value]
+      properties:
+        value:
+          type: number
+        note:
+          type: string
+
+    UnitResponse:
+      type: object
+      required: [id, title, description, type, status, priority, tags, color, created_at, updated_at]
+      properties:
+        id:
+          type: string
+        project_id:
+          type: string
+          nullable: true
+        title:
+          type: string
+        description:
+          type: string
+        type:
+          type: string
+        status:
+          type: string
+        priority:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        color:
+          type: string
+        target_time:
+          type: string
+          format: date-time
+        start_time:
+          type: string
+          format: date-time
+        display_unit:
+          type: string
+        remind_before_days:
+          type: array
+          items:
+            type: integer
+        remind_after_days:
+          type: array
+          items:
+            type: integer
+        current_value:
+          type: number
+        target_value:
+          type: number
+        step:
+          type: number
+        unit_label:
+          type: string
+        allow_exceed:
+          type: boolean
+        remind_on_values:
+          type: array
+          items:
+            type: number
+        remaining_seconds:
+          type: number
+        elapsed_seconds:
+          type: number
+        progress:
+          type: number
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    UnitSummary:
+      type: object
+      properties:
+        total_active:
+          type: integer
+          format: int64
+        total_paused:
+          type: integer
+          format: int64
+        total_completed:
+          type: integer
+          format: int64
+        total_archived:
+          type: integer
+          format: int64
+        expiring_count:
+          type: integer
+          format: int64
+        expired_count:
+          type: integer
+          format: int64
+
+    UnitLogResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        unit_id:
+          type: string
+        delta:
+          type: number
+        value_before:
+          type: number
+        value_after:
+          type: number
+        note:
+          type: string
+        operated_at:
+          type: string
+          format: date-time
+
+    CreateProjectRequest:
+      type: object
+      required: [title]
+      properties:
+        title:
+          type: string
+          maxLength: 128
+        description:
+          type: string
+          maxLength: 10000
+        status:
+          type: string
+          enum: [active, completed, archived]
+        color:
+          type: string
+        icon:
+          type: string
+        sort_order:
+          type: integer
+
+    UpdateProjectRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+          nullable: true
+        status:
+          type: string
+          enum: [active, completed, archived]
+        color:
+          type: string
+        icon:
+          type: string
+        sort_order:
+          type: integer
+
+    ProjectResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+        color:
+          type: string
+        icon:
+          type: string
+        sort_order:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        unit_stats:
+          $ref: "#/components/schemas/ProjectUnitStats"
+
+    ProjectUnitStats:
+      type: object
+      properties:
+        active_count:
+          type: integer
+          format: int64
+        expiring_count:
+          type: integer
+          format: int64
+        completed_count:
+          type: integer
+          format: int64
+        total_count:
+          type: integer
+          format: int64
+
+    CreateTodoRequest:
+      type: object
+      required: [title]
+      properties:
+        group_id:
+          type: string
+          nullable: true
+        title:
+          type: string
+          maxLength: 256
+        description:
+          type: string
+        status:
+          type: string
+          enum: [pending, in_progress, done, cancelled]
+        priority:
+          type: string
+          enum: [low, normal, high, critical]
+        due_date:
+          type: string
+          description: 日期字符串（YYYY-MM-DD 等）
+        sort_order:
+          type: integer
+
+    UpdateTodoRequest:
+      type: object
+      properties:
+        group_id:
+          type: string
+          nullable: true
+        title:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+          enum: [pending, in_progress, done, cancelled]
+        priority:
+          type: string
+          enum: [low, normal, high, critical]
+        due_date:
+          type: string
+        sort_order:
+          type: integer
+
+    UpdateTodoStatusRequest:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [pending, in_progress, done, cancelled]
+
+    BatchTodoRequest:
+      type: object
+      required: [action, ids]
+      properties:
+        action:
+          type: string
+          enum: [complete, delete]
+        ids:
+          type: array
+          minItems: 1
+          items:
+            type: string
+
+    TodoResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        group_id:
+          type: string
+          nullable: true
+        title:
+          type: string
+        description:
+          type: string
+        status:
+          type: string
+        priority:
+          type: string
+        due_date:
+          type: string
+          format: date-time
+          nullable: true
+        sort_order:
+          type: integer
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    CreateTodoGroupRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          maxLength: 64
+        color:
+          type: string
+        sort_order:
+          type: integer
+
+    UpdateTodoGroupRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        color:
+          type: string
+        sort_order:
+          type: integer
+
+    TodoGroupResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        color:
+          type: string
+        sort_order:
+          type: integer
+        todo_count:
+          type: integer
+          format: int64
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    NotificationResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        unit_id:
+          type: string
+        level:
+          type: string
+        message:
+          type: string
+        is_read:
+          type: boolean
+        triggered_at:
+          type: string
+          format: date-time
+        read_at:
+          type: string
+          format: date-time
+          nullable: true
+        unit_title:
+          type: string
+
+    UnreadCountResponse:
+      type: object
+      required: [count]
+      properties:
+        count:
+          type: integer
+          format: int64

@@ -1,0 +1,65 @@
+# =============================================================================
+# Git Attributes
+# =============================================================================
+
+# Auto-detect text files and normalize line endings to LF on commit
+* text=auto eol=lf
+
+# Explicitly declare text files that should always be LF
+*.go    text eol=lf
+*.ts    text eol=lf
+*.tsx   text eol=lf
+*.vue   text eol=lf
+*.js    text eol=lf
+*.jsx   text eol=lf
+*.json  text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.md    text eol=lf
+*.sh    text eol=lf
+*.css   text eol=lf
+*.scss  text eol=lf
+*.html  text eol=lf
+*.toml  text eol=lf
+*.mod   text eol=lf
+*.sum   text eol=lf
+*.conf  text eol=lf
+*.env   text eol=lf
+*.txt   text eol=lf
+*.sql   text eol=lf
+Dockerfile* text eol=lf
+Makefile    text eol=lf
+
+# Windows batch scripts keep CRLF
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+*.ps1   text eol=crlf
+
+# Binary files — do not modify
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.svg   binary
+*.webp  binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.eot   binary
+*.db    binary
+*.zip   binary
+*.tar   binary
+*.gz    binary
+
+# =============================================================================
+# GitHub Linguist — language statistics
+# =============================================================================
+# Exclude lockfiles from language stats
+package-lock.json  linguist-generated=true
+go.sum             linguist-generated=true
+
+# Mark vendor / generated code
+vendor/            linguist-vendored=true
+dist/              linguist-generated=true
+node_modules/      linguist-vendored=true

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 使用问题 / 安装帮助
+    url: https://github.com/DreamReflex/cd-v2/discussions
+    about: 对于使用问题，请使用 Discussions 而非 Issues
+  - name: 安全漏洞
+    url: https://github.com/DreamReflex/cd-v2/security/advisories/new
+    about: 请通过私密安全公告报告安全漏洞，不要在公开 Issue 中披露

@@ -1,0 +1,136 @@
+package router
+
+import (
+	"ops-timer-backend/internal/api/handler"
+	"ops-timer-backend/internal/api/middleware"
+	"ops-timer-backend/internal/pkg/auth"
+	"ops-timer-backend/internal/pkg/response"
+	"ops-timer-backend/internal/service"
+
+	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
+)
+
+type Router struct {
+	engine           *gin.Engine
+	authHandler      *handler.AuthHandler
+	oauthHandler     *handler.OAuthHandler
+	unitHandler      *handler.UnitHandler
+	projectHandler   *handler.ProjectHandler
+	todoHandler      *handler.TodoHandler
+	notifHandler     *handler.NotificationHandler
+	jwtManager       *auth.JWTManager
+	authService      *service.AuthService
+	logger           *zap.Logger
+	corsOrigins      []string
+}
+
+type RouterConfig struct {
+	AuthHandler    *handler.AuthHandler
+	OAuthHandler   *handler.OAuthHandler
+	UnitHandler    *handler.UnitHandler
+	ProjectHandler *handler.ProjectHandler
+	TodoHandler    *handler.TodoHandler
+	NotifHandler   *handler.NotificationHandler
+	JWTManager     *auth.JWTManager
+	AuthService    *service.AuthService
+	Logger         *zap.Logger
+	CorsOrigins    []string
+}
+
+func NewRouter(cfg *RouterConfig) *Router {
+	return &Router{
+		authHandler:    cfg.AuthHandler,
+		oauthHandler:   cfg.OAuthHandler,
+		unitHandler:    cfg.UnitHandler,
+		projectHandler: cfg.ProjectHandler,
+		todoHandler:    cfg.TodoHandler,
+		notifHandler:   cfg.NotifHandler,
+		jwtManager:     cfg.JWTManager,
+		authService:    cfg.AuthService,
+		logger:         cfg.Logger,
+		corsOrigins:    cfg.CorsOrigins,
+	}
+}
+
+func (r *Router) Setup() *gin.Engine {
+	gin.SetMode(gin.ReleaseMode)
+	engine := gin.New()
+	engine.Use(gin.Recovery())
+	engine.Use(middleware.CORSMiddleware(r.corsOrigins))
+	engine.Use(middleware.LoggerMiddleware(r.logger))
+
+	engine.GET("/health", func(c *gin.Context) {
+		response.Success(c, gin.H{"status": "ok"})
+	})
+
+	api := engine.Group("/api/v1")
+
+	// Public routes
+	api.POST("/auth/login", r.authHandler.Login)
+	api.GET("/auth/oauth/config", r.oauthHandler.Config)
+	api.GET("/auth/oauth/login", r.oauthHandler.Login)
+	api.GET("/auth/oauth/callback", r.oauthHandler.Callback)
+
+	// Protected routes
+	protected := api.Group("")
+	protected.Use(middleware.AuthMiddleware(r.jwtManager, r.authService))
+
+	// Auth
+	protected.POST("/auth/logout", r.authHandler.Logout)
+	protected.GET("/auth/profile", r.authHandler.GetProfile)
+	protected.PUT("/auth/profile", r.authHandler.UpdateProfile)
+	protected.PUT("/auth/password", r.authHandler.ChangePassword)
+	protected.GET("/auth/token", r.authHandler.GetToken)
+	protected.POST("/auth/token/regenerate", r.authHandler.RegenerateToken)
+	protected.POST("/auth/test-email", r.authHandler.TestEmail)
+	protected.GET("/auth/smtp-status", r.authHandler.SMTPStatus)
+
+	// Units
+	protected.GET("/units", r.unitHandler.List)
+	protected.POST("/units", r.unitHandler.Create)
+	protected.GET("/units/summary", r.unitHandler.Summary)
+	protected.GET("/units/:id", r.unitHandler.Get)
+	protected.PUT("/units/:id", r.unitHandler.Update)
+	protected.PATCH("/units/:id", r.unitHandler.Update)
+	protected.DELETE("/units/:id", r.unitHandler.Delete)
+	protected.PATCH("/units/:id/status", r.unitHandler.UpdateStatus)
+	protected.POST("/units/:id/step", r.unitHandler.Step)
+	protected.PUT("/units/:id/value", r.unitHandler.SetValue)
+	protected.GET("/units/:id/logs", r.unitHandler.GetLogs)
+
+	// Projects
+	protected.GET("/projects", r.projectHandler.List)
+	protected.POST("/projects", r.projectHandler.Create)
+	protected.GET("/projects/:id", r.projectHandler.Get)
+	protected.PUT("/projects/:id", r.projectHandler.Update)
+	protected.PATCH("/projects/:id", r.projectHandler.Update)
+	protected.DELETE("/projects/:id", r.projectHandler.Delete)
+	protected.GET("/projects/:id/units", r.projectHandler.GetUnits)
+
+	// Todos
+	protected.GET("/todos", r.todoHandler.List)
+	protected.POST("/todos", r.todoHandler.Create)
+	protected.GET("/todos/:id", r.todoHandler.Get)
+	protected.PUT("/todos/:id", r.todoHandler.Update)
+	protected.PATCH("/todos/:id", r.todoHandler.Update)
+	protected.DELETE("/todos/:id", r.todoHandler.Delete)
+	protected.PATCH("/todos/:id/status", r.todoHandler.UpdateStatus)
+	protected.POST("/todos/batch", r.todoHandler.BatchAction)
+
+	// Todo Groups
+	protected.GET("/todo-groups", r.todoHandler.ListGroups)
+	protected.POST("/todo-groups", r.todoHandler.CreateGroup)
+	protected.PUT("/todo-groups/:id", r.todoHandler.UpdateGroup)
+	protected.DELETE("/todo-groups/:id", r.todoHandler.DeleteGroup)
+
+	// Notifications
+	protected.GET("/notifications", r.notifHandler.List)
+	protected.PATCH("/notifications/:id/read", r.notifHandler.MarkAsRead)
+	protected.POST("/notifications/read-all", r.notifHandler.MarkAllAsRead)
+	protected.GET("/notifications/unread-count", r.notifHandler.UnreadCount)
+	protected.DELETE("/notifications/:id", r.notifHandler.Delete)
+
+	r.engine = engine
+	return engine
+}

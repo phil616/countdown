@@ -1,0 +1,118 @@
+name: Security Scan (Trivy)
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  schedule:
+    # Run every day at 02:00 UTC
+    - cron: "0 2 * * *"
+
+jobs:
+  # -----------------------------------------------------------------------
+  # Scan Go dependencies for known CVEs
+  # -----------------------------------------------------------------------
+  scan-go:
+    name: Scan Go Dependencies
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Trivy (Go module)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "fs"
+          scan-ref: "ops-timer-backend"
+          scanners: "vuln,secret"
+          format: "sarif"
+          output: "trivy-go.sarif"
+          severity: "CRITICAL,HIGH"
+          exit-code: "0"
+
+      - name: Upload SARIF (Go)
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: "trivy-go.sarif"
+          category: "trivy-go"
+
+  # -----------------------------------------------------------------------
+  # Scan Node/npm dependencies for known CVEs
+  # -----------------------------------------------------------------------
+  scan-npm:
+    name: Scan npm Dependencies
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Trivy (npm)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "fs"
+          scan-ref: "ops-timer-frontend"
+          scanners: "vuln,secret"
+          format: "sarif"
+          output: "trivy-npm.sarif"
+          severity: "CRITICAL,HIGH"
+          exit-code: "0"
+
+      - name: Upload SARIF (npm)
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: "trivy-npm.sarif"
+          category: "trivy-npm"
+
+  # -----------------------------------------------------------------------
+  # Scan Docker images built from Dockerfiles
+  # -----------------------------------------------------------------------
+  scan-docker:
+    name: Scan Docker Images
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+
+    strategy:
+      matrix:
+        include:
+          - name: backend
+            context: ./ops-timer-backend
+          - name: frontend
+            context: ./ops-timer-frontend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker image (${{ matrix.name }})
+        run: |
+          docker build -t scan-target:${{ matrix.name }} ${{ matrix.context }}
+
+      - name: Run Trivy (image — ${{ matrix.name }})
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "image"
+          image-ref: "scan-target:${{ matrix.name }}"
+          format: "sarif"
+          output: "trivy-image-${{ matrix.name }}.sarif"
+          severity: "CRITICAL,HIGH"
+          exit-code: "0"
+
+      - name: Upload SARIF (image — ${{ matrix.name }})
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: "trivy-image-${{ matrix.name }}.sarif"
+          category: "trivy-image-${{ matrix.name }}"
